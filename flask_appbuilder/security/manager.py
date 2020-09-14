@@ -224,25 +224,26 @@ class BaseSecurityManager(AbstractSecurityManager):
                     "No AUTH_LDAP_SERVER defined on config"
                     " with AUTH_LDAP authentication type."
                 )
-            app.config.setdefault("AUTH_LDAP_SEARCH", "")
-            app.config.setdefault("AUTH_LDAP_SEARCH_FILTER", "")
-            app.config.setdefault("AUTH_LDAP_BIND_USER", "")
-            app.config.setdefault("AUTH_LDAP_APPEND_DOMAIN", "")
-            app.config.setdefault("AUTH_LDAP_USERNAME_FORMAT", "")
-            app.config.setdefault("AUTH_LDAP_BIND_PASSWORD", "")
-            # TLS options
-            app.config.setdefault("AUTH_LDAP_USE_TLS", False)
-            app.config.setdefault("AUTH_LDAP_ALLOW_SELF_SIGNED", False)
-            app.config.setdefault("AUTH_LDAP_TLS_DEMAND", False)
-            app.config.setdefault("AUTH_LDAP_TLS_CACERTDIR", "")
-            app.config.setdefault("AUTH_LDAP_TLS_CACERTFILE", "")
-            app.config.setdefault("AUTH_LDAP_TLS_CERTFILE", "")
-            app.config.setdefault("AUTH_LDAP_TLS_KEYFILE", "")
-            # Mapping options
-            app.config.setdefault("AUTH_LDAP_UID_FIELD", "uid")
-            app.config.setdefault("AUTH_LDAP_FIRSTNAME_FIELD", "givenName")
-            app.config.setdefault("AUTH_LDAP_LASTNAME_FIELD", "sn")
-            app.config.setdefault("AUTH_LDAP_EMAIL_FIELD", "mail")
+        app.config.setdefault("AUTH_LDAP_SEARCH", "")
+        app.config.setdefault("AUTH_LDAP_SEARCH_FILTER", "")
+        app.config.setdefault("AUTH_LDAP_BIND_USER", "")
+        app.config.setdefault("AUTH_LDAP_APPEND_DOMAIN", "")
+        app.config.setdefault("AUTH_LDAP_USERNAME_FORMAT", "")
+        app.config.setdefault("AUTH_LDAP_BIND_PASSWORD", "")
+        app.config.setdefault("AUTH_LDAP_GROUP_FIELD", "memberOf")
+        # TLS options
+        app.config.setdefault("AUTH_LDAP_USE_TLS", False)
+        app.config.setdefault("AUTH_LDAP_ALLOW_SELF_SIGNED", False)
+        app.config.setdefault("AUTH_LDAP_TLS_DEMAND", False)
+        app.config.setdefault("AUTH_LDAP_TLS_CACERTDIR", "")
+        app.config.setdefault("AUTH_LDAP_TLS_CACERTFILE", "")
+        app.config.setdefault("AUTH_LDAP_TLS_CERTFILE", "")
+        app.config.setdefault("AUTH_LDAP_TLS_KEYFILE", "")
+        # Mapping options
+        app.config.setdefault("AUTH_LDAP_UID_FIELD", "uid")
+        app.config.setdefault("AUTH_LDAP_FIRSTNAME_FIELD", "givenName")
+        app.config.setdefault("AUTH_LDAP_LASTNAME_FIELD", "sn")
+        app.config.setdefault("AUTH_LDAP_EMAIL_FIELD", "mail")
 
         if self.auth_type == AUTH_OID:
             self.oid = OpenID(app)
@@ -333,6 +334,10 @@ class BaseSecurityManager(AbstractSecurityManager):
         return self.appbuilder.get_app.config["AUTH_ROLE_PUBLIC"]
 
     @property
+    def auth_role_mapping_static(self):
+        return self.appbuilder.get_app.config["AUTH_ROLE_MAPPING_STATIC"]
+
+    @property
     def auth_ldap_server(self):
         return self.appbuilder.get_app.config["AUTH_LDAP_SERVER"]
 
@@ -391,6 +396,14 @@ class BaseSecurityManager(AbstractSecurityManager):
     @property
     def auth_ldap_email_field(self):
         return self.appbuilder.get_app.config["AUTH_LDAP_EMAIL_FIELD"]
+
+    @property
+    def auth_ldap_group_field(self):
+        return self.appbuilder.get_app.config["AUTH_LDAP_GROUP_FIELD"]
+    
+    @property
+    def auth_ldap_group_format(self):
+        return self.appbuilder.get_app.config["AUTH_LDAP_GROUP_FORMAT"]
 
     @property
     def auth_ldap_bind_first(self):
@@ -813,6 +826,7 @@ class BaseSecurityManager(AbstractSecurityManager):
                 self.auth_ldap_firstname_field,
                 self.auth_ldap_lastname_field,
                 self.auth_ldap_email_field,
+                self.auth_ldap_group_field,
             ],
         )
         if user:
@@ -1035,8 +1049,55 @@ class BaseSecurityManager(AbstractSecurityManager):
         # If user does not exist on the DB and not self user registration, go away
         if not user and not self.auth_user_registration:
             return None
-        # User does not exist, create one if self registration.
-        if not user:
+        #Obtain LDAP group
+        try:
+            import ldap
+        except Exception:
+            raise Exception("No ldap library for python.")
+        try:
+            if self.auth_ldap_allow_self_signed:
+                ldap.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_ALLOW)
+                ldap.set_option(ldap.OPT_X_TLS_NEWCTX, 0)
+            elif self.auth_ldap_tls_demand:
+                ldap.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_DEMAND)
+                ldap.set_option(ldap.OPT_X_TLS_NEWCTX, 0)
+            if self.auth_ldap_tls_cacertdir:
+                ldap.set_option(
+                    ldap.OPT_X_TLS_CACERTDIR, self.auth_ldap_tls_cacertdir
+                )
+            if self.auth_ldap_tls_cacertfile:
+                ldap.set_option(
+                    ldap.OPT_X_TLS_CACERTFILE, self.auth_ldap_tls_cacertfile
+                )
+            if self.auth_ldap_tls_certfile and self.auth_ldap_tls_keyfile:
+                ldap.set_option(
+                    ldap.OPT_X_TLS_CERTFILE, self.auth_ldap_tls_certfile
+                )
+                ldap.set_option(ldap.OPT_X_TLS_KEYFILE, self.auth_ldap_tls_keyfile)
+            con = ldap.initialize(self.auth_ldap_server)
+            con.set_option(ldap.OPT_REFERRALS, 0)
+            if self.auth_ldap_use_tls:
+                try:
+                    con.start_tls_s()
+                except Exception:
+                    log.info(
+                        LOGMSG_ERR_SEC_AUTH_LDAP_TLS.format(self.auth_ldap_server)
+                    )
+                    return None
+            ldap_user_info = self._search_ldap(ldap, con, userinfo["username"])[0][1]
+            log.error(ldap_user_info)
+            user_group = [x.decode("utf-8") for x in ldap_user_info.get(self.auth_ldap_group_field,[])]
+            log.error(user_group)
+            # LDAP group to role
+            import re
+            p = re.compile(self.auth_ldap_group_format[0])
+            roles = set()
+            for group in user_group:
+                role = p.sub(self.auth_ldap_group_format[1], group)
+                # Static mapping
+                role = self.auth_role_mapping_static.get(role, {role})
+                roles.update(role)
+            # Add login default role
             role_name = self.auth_user_registration_role
             if self.auth_user_registration_role_jmespath:
                 import jmespath
@@ -1044,6 +1105,14 @@ class BaseSecurityManager(AbstractSecurityManager):
                 role_name = jmespath.search(
                     self.auth_user_registration_role_jmespath, userinfo
                 )
+            roles.add(role_name)
+            log.error(f"User {userinfo['username']} got roles: {roles}")
+            db_roles = self.find_multiple_roles(roles)
+            log.error(f"User {userinfo['username']} got DB roles: {db_roles}")
+        except Exception as e:
+            log.error(e)
+        # User does not exist, create one if self registration.
+        if not user:
             user = self.add_user(
                 username=userinfo["username"],
                 first_name=userinfo.get("first_name", ""),
@@ -1051,9 +1120,11 @@ class BaseSecurityManager(AbstractSecurityManager):
                 email=userinfo.get("email", ""),
                 role=self.find_role(role_name),
             )
+            log.error(user)
             if not user:
                 log.error("Error creating a new OAuth user %s" % userinfo["username"])
                 return None
+        user.roles = db_roles
         self.update_user_auth_stat(user)
         return user
 

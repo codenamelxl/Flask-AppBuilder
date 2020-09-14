@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional
 import uuid
 
-from sqlalchemy import and_, func, literal
+from sqlalchemy import and_, func, literal, or_
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.orm.exc import MultipleResultsFound
 from werkzeug.security import generate_password_hash
@@ -270,6 +270,15 @@ class SecurityManager(BaseSecurityManager):
     def find_role(self, name):
         return (
             self.get_session.query(self.role_model).filter_by(name=name).one_or_none()
+        )
+    
+    def find_multiple_roles(self, name_list):
+        return (
+            self.get_session.query(self.role_model).filter(
+                or_(
+                    *[self.role_model.name.like(name) for name in name_list]
+                )
+            ).all()
         )
 
     def get_all_roles(self):
