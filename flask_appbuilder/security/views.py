@@ -632,7 +632,7 @@ class AuthOAuthView(AuthView):
         if g.user is not None and g.user.is_authenticated:
             log.debug("Already authenticated {0}".format(g.user))
             return redirect(self.appbuilder.get_url_for_index)
-        if provider is None:
+        if provider is None and len(self.appbuilder.sm.oauth_providers) > 1:
             return self.render_template(
                 self.login_template,
                 providers=self.appbuilder.sm.oauth_providers,
@@ -640,6 +640,8 @@ class AuthOAuthView(AuthView):
                 appbuilder=self.appbuilder,
             )
         else:
+            if provider is None:
+                provider = self.appbuilder.sm.oauth_providers[0]["name"]
             log.debug("Going to call authorize for: {0}".format(provider))
             state = jwt.encode(
                 request.args.to_dict(flat=False),
